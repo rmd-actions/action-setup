@@ -5,20 +5,22 @@
   "packages": {
     "": {
       "dependencies": {
-        "pnpm": "latest"
+        "pnpm": "11.0.0-rc.0"
       }
     },
     "node_modules/pnpm": {
-      "version": "10.32.1",
-      "resolved": "https://registry.npmjs.org/pnpm/-/pnpm-10.32.1.tgz",
-      "integrity": "sha512-pwaTjw6JrBRWtlY+q07fHR+vM2jRGR/FxZeQ6W3JGORFarLmfWE94QQ9LoyB+HMD5rQNT/7KnfFe8a1Wc0jyvg==",
+      "version": "11.0.0-rc.0",
+      "resolved": "https://registry.npmjs.org/pnpm/-/pnpm-11.0.0-rc.0.tgz",
+      "integrity": "sha512-Hwjq3uoCXpFEjebV3uQqbJR2QlcADAQ6nja4/xKEmnLry5xl/BiFCUdHJJ5S9T2Lc62hGBRGu6gYZoEMik0/bA==",
       "license": "MIT",
       "bin": {
-        "pnpm": "bin/pnpm.cjs",
-        "pnpx": "bin/pnpx.cjs"
+        "pn": "bin/pnpm.mjs",
+        "pnpm": "bin/pnpm.mjs",
+        "pnpx": "bin/pnpx.mjs",
+        "pnx": "bin/pnpx.mjs"
       },
       "engines": {
-        "node": ">=18.12"
+        "node": ">=22.13"
       },
       "funding": {
         "url": "https://opencollective.com/pnpm"

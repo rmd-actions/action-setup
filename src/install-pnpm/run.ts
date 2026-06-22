@@ -29,7 +29,21 @@ export async function runSelfInstaller(inputs: Inputs): Promise<number> {
   await writeFile(path.join(dest, 'package.json'), packageJson)
   await writeFile(path.join(dest, 'package-lock.json'), JSON.stringify(lockfile))
 
-  const npmExitCode = await runCommand('npm', ['ci'], { cwd: dest })
+  // Append the action's node directory to PATH so npm's
+  // `#!/usr/bin/env node` shebang resolves on runners (e.g. GHE
+  // self-hosted) where node isn't already on PATH. Append (not
+  // prepend) so a user-installed toolchain on PATH — e.g. from a
+  // prior `setup-node` step — keeps precedence; otherwise the
+  // runner-bundled node would shadow it and pair the user's npm
+  // with a mismatched node version. npm itself is resolved via
+  // PATH — on the GitHub Actions runner it is not co-located with
+  // `process.execPath`.
+  const nodeDir = path.dirname(process.execPath)
+  // On Windows, the PATH key casing varies; search case-insensitively.
+  const pathKey = Object.keys(process.env).find(k => k.toUpperCase() === 'PATH') ?? 'PATH'
+  const currentPath = process.env[pathKey]
+  const npmEnv = { ...process.env, [pathKey]: currentPath ? currentPath + path.delimiter + nodeDir : nodeDir }
+  const npmExitCode = await runCommand('npm', ['ci'], { cwd: dest, env: npmEnv })
   if (npmExitCode !== 0) {
     return npmExitCode
   }
@@ -40,11 +54,13 @@ export async function runSelfInstaller(inputs: Inputs): Promise<number> {
   const pnpmHome = standalone && process.platform === 'win32'
     ? path.join(dest, 'node_modules', '@pnpm', 'exe')
     : path.join(dest, 'node_modules', '.bin')
-  // pnpm expects PNPM_HOME/bin in PATH for global binaries (e.g. node
-  // installed via `pnpm runtime`). Add it first so the next addPath
-  // (pnpmHome itself, which contains pnpm.exe) has higher precedence.
-  addPath(path.join(pnpmHome, 'bin'))
+  // PNPM_HOME/bin is where `pnpm self-update` places the target version
+  // binary. It must have higher PATH precedence than pnpmHome (which
+  // contains the bootstrap binary) so the self-updated version is found
+  // first. The bootstrap pnpm is invoked via absolute path, not PATH,
+  // so this ordering does not affect the bootstrap step.
   addPath(pnpmHome)
+  addPath(path.join(pnpmHome, 'bin'))
   exportVariable('PNPM_HOME', pnpmHome)
 
   // Ensure pnpm bin link exists — npm ci sometimes doesn't create it
@@ -153,10 +169,11 @@ function getSystemNodeVersion(): Promise<{ major: number; minor: number }> {
   })
 }
 
-function runCommand(cmd: string, args: string[], opts: { cwd: string }): Promise<number> {
+function runCommand(cmd: string, args: string[], opts: { cwd: string; env?: Record<string, string | undefined> }): Promise<number> {
   return new Promise<number>((resolve, reject) => {
     const cp = spawn(cmd, args, {
       cwd: opts.cwd,
+      env: opts.env,
       stdio: ['pipe', 'inherit', 'inherit'],
       shell: process.platform === 'win32',
     })

@@ -7,6 +7,9 @@ on:
       - master
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     # Cross-OS coverage. Exercises the bootstrap install + PATH on each platform,
@@ -51,7 +54,7 @@ jobs:
             version: '12.3.4'
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: pnpm
         name: Run the action
@@ -134,7 +137,7 @@ jobs:
             expect_pm_on_fail_unset: true
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up package.json
         run: echo '${{ matrix.manifest }}' > package.json
@@ -183,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -212,8 +215,8 @@ jobs:
           test ! -d "$PNPM_DEST/node_modules/@pnpm/exe"
           which pnpm
           actual="$(pnpm --version)"
-          if [ "${actual}" != "12.3.4" ]; then
-            echo "Expected 12.3.4, got ${actual}"
+          if [ "${actual}" != "12.17.0" ]; then
+            echo "Expected 12.17.0, got ${actual}"
             exit 1
           fi
           mkdir /tmp/test-standalone
@@ -221,6 +224,68 @@ jobs:
           pnpm init
           pnpm add is-odd
         shell: bash
+
+  shared_store:
+    name: 'Repeated install with shared store (pnpm ${{ matrix.version }})'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ['12.11.2', '12.16.1']
+    env:
+      REQUIRED: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure the shared store and project pin
+        run: |
+          config_home="$RUNNER_TEMP/pnpm-config"
+          store_dir="$RUNNER_TEMP/pnpm-store"
+          mkdir -p "$config_home/pnpm"
+          printf 'storeDir: %s\nenableGlobalVirtualStore: true\n' "$store_dir" > "$config_home/pnpm/config.yaml"
+          printf 'XDG_CONFIG_HOME=%s\nPNPM_STORE_DIR=%s\n' "$config_home" "$store_dir" >> "$GITHUB_ENV"
+          printf '{"packageManager":"pnpm@%s"}\n' "$REQUIRED" > package.json
+
+      - id: first
+        name: Install pnpm into a fresh destination
+        uses: ./
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+          standalone: false
+
+      - name: Verify the first installation and populated store
+        working-directory: ${{ runner.temp }}
+        env:
+          BIN_DEST: ${{ steps.first.outputs.bin_dest }}
+        run: |
+          test "$("$BIN_DEST/pnpm" --version)" = "$REQUIRED"
+          store_path="$("$BIN_DEST/pnpm" store path --silent)"
+          case "$store_path/" in
+            "$PNPM_STORE_DIR/"*) ;;
+            *) echo "Unexpected store path: $store_path"; exit 1 ;;
+          esac
+          test -n "$(find "$PNPM_STORE_DIR" -type f -print -quit)"
+          touch "$PNPM_STORE_DIR/reused-by-second-install"
+
+      - id: second
+        name: Reinstall pnpm with the same destination and store
+        uses: ./
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+          standalone: false
+
+      - name: Verify the second installation reused the store
+        working-directory: ${{ runner.temp }}
+        env:
+          BIN_DEST: ${{ steps.second.outputs.bin_dest }}
+        run: |
+          test -f "$PNPM_STORE_DIR/reused-by-second-install"
+          test "$("$BIN_DEST/pnpm" --version)" = "$REQUIRED"
+          test "$(pnpm --version)" = "$REQUIRED"
 
   standalone_windows_self_update:
     # Regression guard for the patchPnpmEnv PATH-shadow bug. When
@@ -236,7 +301,7 @@ jobs:
     name: 'Standalone Windows self-update (PATH regression)'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up package.json with a minimal manifest
         # run_install needs a manifest to install against. Removing the
@@ -294,7 +359,7 @@ jobs:
             manifest: '{"devEngines":{"packageManager":{"name":"pnpm","version":">=10 <11"}},"dependencies":{"is-odd":"3.0.1"}}'
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up package.json
         run: echo '${{ matrix.manifest }}' > package.json
@@ -338,7 +403,7 @@ jobs:
                 - yarn
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Run the action
         uses: ./
@@ -357,3 +422,45 @@ jobs:
             exit 1
           fi
         shell: bash
+
+  windows_dest_spaces:
+    name: 'Windows destination with spaces (${{ matrix.version }} / standalone=${{ matrix.standalone }})'
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: '10.33.0'
+            standalone: false
+          - version: '11.25.0'
+            standalone: true
+          - version: '12.3.4'
+            standalone: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: pnpm
+        uses: ./
+        with:
+          version: ${{ matrix.version }}
+          standalone: ${{ matrix.standalone }}
+          dest: '${{ runner.temp }}/pnpm setup & tools'
+      - name: Verify PowerShell and bin_dest use the requested version
+        shell: pwsh
+        env:
+          EXPECTED_VERSION: ${{ matrix.version }}
+          BIN_DEST: ${{ steps.pnpm.outputs.bin_dest }}
+        run: |
+          $actual = pnpm --version
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:EXPECTED_VERSION) {
+            throw "Expected $env:EXPECTED_VERSION on PATH, got $actual"
+          }
+          $command = Get-Command pnpm
+          $executable = Join-Path $env:BIN_DEST $command.Name
+          $actual = & $executable --version
+          if ($LASTEXITCODE -ne 0 -or $actual -ne $env:EXPECTED_VERSION) {
+            throw "Expected $env:EXPECTED_VERSION via bin_dest, got $actual"
+          }
+          $pnpx = Get-Command pnpx -ErrorAction Stop
+          if ((Split-Path -Parent $pnpx.Source) -ne $env:BIN_DEST) {
+            throw "pnpx resolves to $($pnpx.Source), expected under $env:BIN_DEST"
+          }
